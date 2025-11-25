@@ -85,7 +85,7 @@ app.post('/auth/oauth', async (req, res) => {
         // 1) Try to find by providerId
         let user = await User.findOne({ 'providers.provider': provider, 'providers.providerId': providerId });
 
-        // 2) fallback: find by email (user registered earlier)
+        // 2) fallback: find by email 
         if (!user) {
             user = await User.findOne({ email });
         }
@@ -136,7 +136,104 @@ function verifyToken(req, res, next) {
 app.get('/protected', verifyToken, (req, res) => {
     res.json({ message: `Hello ${req.user.name || req.user.email}, this is protected.` });
 });
+const SkillSchema = new mongoose.Schema({
+    title: { type: String, required: true },
+    shortDescription: { type: String, required: true },
+    fullDescription: { type: String, required: true },
+    category: { type: String, required: true },
+    price: { type: Number, required: true, default: 0 },
+    imageUrl: { type: String, default: null },
+    ownerId: { type: String, required: true }, // store owner user id from token
+}, { timestamps: true });
 
+const Skill = mongoose.models.Skill || mongoose.model('Skill', SkillSchema);
+
+// Create a skill
+app.post('/skills', verifyToken, async (req, res) => {
+    try {
+        const { title, shortDescription, fullDescription, category, price, imageUrl } = req.body;
+
+        // Basic validation
+        if (!title || !shortDescription || !fullDescription || !category) {
+            return res.status(400).json({ message: 'Missing required fields' });
+        }
+        const ownerId = req.user?.sub;
+        if (!ownerId) return res.status(401).json({ message: 'Invalid token payload' });
+
+        const skill = await Skill.create({
+            title,
+            shortDescription,
+            fullDescription,
+            category,
+            price: typeof price === 'number' ? price : parseFloat(price) || 0,
+            imageUrl: imageUrl || null,
+            ownerId
+        });
+
+        return res.status(201).json({ skill });
+    } catch (err) {
+        console.error('Create skill error:', err);
+        return res.status(500).json({ message: 'Server error creating skill' });
+    }
+});
+
+// List skills 
+app.get('/skills', async (req, res) => {
+    try {
+        const skills = await Skill.find().sort({ createdAt: -1 }).limit(100);
+        return res.json({ skills });
+    } catch (err) {
+        console.error('List skills error:', err);
+        return res.status(500).json({ message: 'Server error' });
+    }
+});
+
+app.get('/skills/my', verifyToken, async (req, res) => {
+    try {
+        const ownerId = req.user.sub; // user id from token
+
+        const skills = await Skill.find({ ownerId }).sort({ createdAt: -1 });
+
+        return res.json({ skills });
+    } catch (err) {
+        console.error('My skills error:', err);
+        return res.status(500).json({ message: 'Server error' });
+    }
+});
+
+app.get('/skills/:id', async (req, res) => {
+    try {
+        const skill = await Skill.findById(req.params.id);
+
+        if (!skill) {
+            return res.status(404).json({ message: 'Skill not found' });
+        }
+
+        return res.json(skill);
+    } catch (err) {
+        console.error('Get skill error:', err);
+        return res.status(500).json({ message: 'Server error' });
+    }
+});
+
+app.delete('/skills/:id', verifyToken, async (req, res) => {
+    try {
+        const skill = await Skill.findById(req.params.id);
+
+        if (!skill) return res.status(404).json({ message: 'Skill not found' });
+
+        if (skill.ownerId !== req.user.sub) {
+            return res.status(403).json({ message: 'Not allowed to delete this skill' });
+        }
+
+        await skill.deleteOne();
+
+        return res.json({ message: 'Skill deleted' });
+    } catch (err) {
+        console.error('Delete error:', err);
+        return res.status(500).json({ message: 'Server error' });
+    }
+});
 /* ---------------------------
    Start server & connect MongoDB
    --------------------------- */
